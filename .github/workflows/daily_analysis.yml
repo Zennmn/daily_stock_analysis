@@ -48,6 +48,11 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: 安装 Markdown 转图片工具
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wkhtmltopdf
       
       - name: 创建必要目录
         run: |
@@ -155,6 +160,9 @@ jobs:
           # ==========================================
           REPORT_TYPE: ${{ vars.REPORT_TYPE || secrets.REPORT_TYPE || 'simple' }}
           SINGLE_STOCK_NOTIFY: ${{ vars.SINGLE_STOCK_NOTIFY || secrets.SINGLE_STOCK_NOTIFY || 'false' }}
+          MARKDOWN_TO_IMAGE_CHANNELS: ${{ vars.MARKDOWN_TO_IMAGE_CHANNELS || secrets.MARKDOWN_TO_IMAGE_CHANNELS }}
+          MARKDOWN_TO_IMAGE_MAX_CHARS: ${{ vars.MARKDOWN_TO_IMAGE_MAX_CHARS || secrets.MARKDOWN_TO_IMAGE_MAX_CHARS || '15000' }}
+          MD2IMG_ENGINE: ${{ vars.MD2IMG_ENGINE || secrets.MD2IMG_ENGINE || 'wkhtmltoimage' }}
           MARKET_REVIEW_ENABLED: ${{ vars.MARKET_REVIEW_ENABLED || secrets.MARKET_REVIEW_ENABLED || 'true' }}
           ANALYSIS_DELAY: ${{ vars.ANALYSIS_DELAY || secrets.ANALYSIS_DELAY || '0' }}
           TRADING_DAY_CHECK_ENABLED: ${{ vars.TRADING_DAY_CHECK_ENABLED || secrets.TRADING_DAY_CHECK_ENABLED || 'true' }}
