@@ -1,0 +1,64 @@
+name: Telegram Render Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      send_to_telegram:
+        description: 'Send rendered PNG to Telegram'
+        required: false
+        default: true
+        type: boolean
+      engine:
+        description: 'Markdown-to-image engine'
+        required: true
+        default: 'wkhtmltoimage'
+        type: choice
+        options:
+          - wkhtmltoimage
+          - markdown-to-file
+
+jobs:
+  render-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install render dependencies and fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wkhtmltopdf fonts-noto-cjk fonts-wqy-zenhei fonts-wqy-microhei fonts-noto-color-emoji
+          if [ "${{ github.event.inputs.engine }}" = "markdown-to-file" ]; then
+            sudo npm install -g markdown-to-file
+          fi
+
+      - name: Render sample markdown
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MD2IMG_ENGINE: ${{ github.event.inputs.engine }}
+          MARKDOWN_TO_IMAGE_MAX_CHARS: '15000'
+          SEND_TO_TELEGRAM: ${{ github.event.inputs.send_to_telegram }}
+        run: |
+          python scripts/test_telegram_render.py
+
+      - name: Upload render artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: telegram-render-test-${{ github.run_number }}
+          path: render_test_output/
+          retention-days: 7
