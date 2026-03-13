@@ -52,7 +52,7 @@ jobs:
       - name: 安装 Markdown 转图片工具
         run: |
           sudo apt-get update
-          sudo apt-get install -y wkhtmltopdf
+          sudo apt-get install -y wkhtmltopdf fonts-noto-cjk fonts-wqy-zenhei fonts-wqy-microhei fonts-noto-color-emoji
       
       - name: 创建必要目录
         run: |
