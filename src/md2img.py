@@ -86,9 +86,9 @@ def _markdown_to_image_wkhtml(markdown_text: str) -> Optional[bytes]:
         options = {
             "format": "png",
             "encoding": "UTF-8",
-            "width": 1600,
+            "width": 2000,
             "disable-smart-width": "",
-            "zoom": 2,
+            "zoom": 2.5,
             "quality": 100,
             "quiet": "",
         }

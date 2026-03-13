@@ -118,9 +118,9 @@ def markdown_to_html_document(markdown_text: str) -> str:
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
                 line-height: 1.5;
                 color: #24292e;
-                font-size: 14px;
+                font-size: 16px;
                 padding: 15px;
-                max-width: 900px;
+                max-width: 1100px;
                 margin: 0 auto;
             }
             h1 {
@@ -153,11 +153,11 @@ def markdown_to_html_document(markdown_text: str) -> str:
                 margin: 12px 0;
                 display: block;
                 overflow-x: auto;
-                font-size: 13px;
+                font-size: 14px;
             }
             th, td {
                 border: 1px solid #dfe2e5;
-                padding: 6px 10px;
+                padding: 8px 12px;
                 text-align: left;
             }
             th {
