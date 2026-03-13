@@ -52,6 +52,7 @@ jobs:
           MD2IMG_ENGINE: ${{ github.event.inputs.engine }}
           MARKDOWN_TO_IMAGE_MAX_CHARS: '15000'
           SEND_TO_TELEGRAM: ${{ github.event.inputs.send_to_telegram }}
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           python scripts/test_telegram_render.py
 
