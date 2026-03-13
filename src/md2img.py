@@ -82,9 +82,14 @@ def _markdown_to_image_wkhtml(markdown_text: str) -> Optional[bytes]:
 
     html = markdown_to_html_document(markdown_text)
     try:
+        # Increase rasterization scale to improve readability after Telegram compression.
         options = {
             "format": "png",
             "encoding": "UTF-8",
+            "width": 1600,
+            "disable-smart-width": "",
+            "zoom": 2,
+            "quality": 100,
             "quiet": "",
         }
         out = imgkit.from_string(html, False, options=options)
