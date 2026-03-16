@@ -6,6 +6,7 @@ Telegram 发送提醒服务
 1. 通过 Telegram Bot API 发送 文本消息
 2. 通过 Telegram Bot API 发送 图片消息
 """
+import io
 import logging
 from typing import Optional
 import requests
@@ -16,6 +17,8 @@ from src.config import Config
 
 
 logger = logging.getLogger(__name__)
+TELEGRAM_PHOTO_MAX_BYTES = 10 * 1024 * 1024
+TELEGRAM_PHOTO_TARGET_BYTES = 9_500_000
 
 
 class TelegramSender:
@@ -209,10 +212,24 @@ class TelegramSender:
         message_thread_id = self._telegram_config.get('message_thread_id')
         api_url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
         try:
+            upload_name = "report.png"
+            mime_type = "image/png"
+            payload_bytes = image_bytes
+            if len(image_bytes) > TELEGRAM_PHOTO_MAX_BYTES:
+                compressed = self._compress_telegram_photo(image_bytes)
+                if compressed:
+                    payload_bytes = compressed
+                    upload_name = "report.jpg"
+                    mime_type = "image/jpeg"
+                    logger.info(
+                        "Telegram image compressed before upload: %d -> %d bytes",
+                        len(image_bytes),
+                        len(payload_bytes),
+                    )
             data = {"chat_id": chat_id}
             if message_thread_id:
                 data['message_thread_id'] = message_thread_id
-            files = {"photo": ("report.png", image_bytes, "image/png")}
+            files = {"photo": (upload_name, payload_bytes, mime_type)}
             response = requests.post(api_url, data=data, files=files, timeout=30)
             if response.status_code == 200 and response.json().get('ok'):
                 logger.info("Telegram 图片发送成功")
@@ -222,6 +239,43 @@ class TelegramSender:
         except Exception as e:
             logger.error("Telegram 图片发送异常: %s", e)
             return False
+
+    def _compress_telegram_photo(self, image_bytes: bytes) -> Optional[bytes]:
+        """Compress oversized image bytes into a Telegram-friendly JPEG."""
+        try:
+            from PIL import Image
+        except ImportError:
+            logger.warning("Pillow unavailable, cannot compress Telegram photo")
+            return None
+
+        try:
+            with Image.open(io.BytesIO(image_bytes)) as img:
+                if img.mode in ("RGBA", "LA"):
+                    background = Image.new("RGB", img.size, (255, 255, 255))
+                    alpha = img.getchannel("A") if "A" in img.getbands() else None
+                    background.paste(img, mask=alpha)
+                    img = background
+                elif img.mode != "RGB":
+                    img = img.convert("RGB")
+
+                for quality in (95, 90, 85, 80, 75, 70, 65, 60):
+                    out = io.BytesIO()
+                    img.save(
+                        out,
+                        format="JPEG",
+                        quality=quality,
+                        optimize=True,
+                        progressive=True,
+                    )
+                    compressed = out.getvalue()
+                    if len(compressed) <= TELEGRAM_PHOTO_TARGET_BYTES:
+                        return compressed
+        except Exception as e:
+            logger.warning("Telegram photo compression failed: %s", e)
+            return None
+
+        logger.warning("Compressed Telegram photo still exceeds safe upload size")
+        return None
 
     def _convert_to_telegram_markdown(self, text: str) -> str:
         """
