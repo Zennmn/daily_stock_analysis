@@ -1,105 +1,83 @@
 # -*- coding: utf-8 -*-
 """
-Telegram 发送提醒服务
+Telegram sender.
 
-职责：
-1. 通过 Telegram Bot API 发送 文本消息
-2. 通过 Telegram Bot API 发送 图片消息
+Responsibilities:
+1. Send text messages via Telegram Bot API.
+2. Send rendered report images as files to preserve clarity.
 """
-import io
+
+from __future__ import annotations
+
 import logging
-from typing import Optional
-import requests
-import time
 import re
+import time
+from typing import Optional
+
+import requests
 
 from src.config import Config
 
 
 logger = logging.getLogger(__name__)
-TELEGRAM_PHOTO_MAX_BYTES = 10 * 1024 * 1024
-TELEGRAM_PHOTO_TARGET_BYTES = 9_500_000
 
 
 class TelegramSender:
-    
     def __init__(self, config: Config):
-        """
-        初始化 Telegram 配置
-
-        Args:
-            config: 配置对象
-        """
         self._telegram_config = {
-            'bot_token': getattr(config, 'telegram_bot_token', None),
-            'chat_id': getattr(config, 'telegram_chat_id', None),
-            'message_thread_id': getattr(config, 'telegram_message_thread_id', None),
+            "bot_token": getattr(config, "telegram_bot_token", None),
+            "chat_id": getattr(config, "telegram_chat_id", None),
+            "message_thread_id": getattr(config, "telegram_message_thread_id", None),
         }
-    
+
     def _is_telegram_configured(self) -> bool:
-        """检查 Telegram 配置是否完整"""
-        return bool(self._telegram_config['bot_token'] and self._telegram_config['chat_id'])
-   
+        return bool(
+            self._telegram_config["bot_token"] and self._telegram_config["chat_id"]
+        )
+
     def send_to_telegram(self, content: str) -> bool:
-        """
-        推送消息到 Telegram 机器人
-        
-        Telegram Bot API 格式：
-        POST https://api.telegram.org/bot<token>/sendMessage
-        {
-            "chat_id": "xxx",
-            "text": "消息内容",
-            "parse_mode": "Markdown"
-        }
-        
-        Args:
-            content: 消息内容（Markdown 格式）
-            
-        Returns:
-            是否发送成功
-        """
         if not self._is_telegram_configured():
-            logger.warning("Telegram 配置不完整，跳过推送")
+            logger.warning("Telegram config incomplete, skipping notification")
             return False
-        
-        bot_token = self._telegram_config['bot_token']
-        chat_id = self._telegram_config['chat_id']
-        message_thread_id = self._telegram_config.get('message_thread_id')
-        
+
+        bot_token = self._telegram_config["bot_token"]
+        chat_id = self._telegram_config["chat_id"]
+        message_thread_id = self._telegram_config.get("message_thread_id")
+
         try:
-            # Telegram API 端点
             api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-            
-            # Telegram 消息最大长度 4096 字符
             max_length = 4096
-            
+
             if len(content) <= max_length:
-                # 单条消息发送
-                return self._send_telegram_message(api_url, chat_id, content, message_thread_id)
-            else:
-                # 分段发送长消息
-                return self._send_telegram_chunked(api_url, chat_id, content, max_length, message_thread_id)
-                
+                return self._send_telegram_message(
+                    api_url, chat_id, content, message_thread_id
+                )
+            return self._send_telegram_chunked(
+                api_url, chat_id, content, max_length, message_thread_id
+            )
         except Exception as e:
-            logger.error(f"发送 Telegram 消息失败: {e}")
-            import traceback
-            logger.debug(traceback.format_exc())
+            logger.error("Telegram text send failed: %s", e)
+            logger.debug("Telegram text send traceback", exc_info=True)
             return False
-    
-    def _send_telegram_message(self, api_url: str, chat_id: str, text: str, message_thread_id: Optional[str] = None) -> bool:
-        """Send a single Telegram message with exponential backoff retry (Fixes #287)"""
-        # Convert Markdown to Telegram-compatible format
+
+    def _send_telegram_message(
+        self,
+        api_url: str,
+        chat_id: str,
+        text: str,
+        message_thread_id: Optional[str] = None,
+    ) -> bool:
         telegram_text = self._convert_to_telegram_markdown(text)
-        
+
         payload = {
             "chat_id": chat_id,
             "text": telegram_text,
             "parse_mode": "Markdown",
-            "disable_web_page_preview": True
+            "disable_web_page_preview": True,
         }
 
         if message_thread_id:
-            payload['message_thread_id'] = message_thread_id
+            payload["message_thread_id"] = message_thread_id
 
         max_retries = 3
         for attempt in range(1, max_retries + 1):
@@ -107,210 +85,163 @@ class TelegramSender:
                 response = requests.post(api_url, json=payload, timeout=10)
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
                 if attempt < max_retries:
-                    delay = 2 ** attempt  # 2s, 4s
-                    logger.warning(f"Telegram request failed (attempt {attempt}/{max_retries}): {e}, "
-                                   f"retrying in {delay}s...")
-                    time.sleep(delay)
-                    continue
-                else:
-                    logger.error(f"Telegram request failed after {max_retries} attempts: {e}")
-                    return False
-        
-            if response.status_code == 200:
-                result = response.json()
-                if result.get('ok'):
-                    logger.info("Telegram 消息发送成功")
-                    return True
-                else:
-                    error_desc = result.get('description', '未知错误')
-                    logger.error(f"Telegram 返回错误: {error_desc}")
-                    
-                    # If Markdown parsing failed, fall back to plain text
-                    if 'parse' in error_desc.lower() or 'markdown' in error_desc.lower():
-                        logger.info("尝试使用纯文本格式重新发送...")
-                        plain_payload = dict(payload)
-                        plain_payload.pop('parse_mode', None)
-                        plain_payload['text'] = text  # Use original text
-                        
-                        try:
-                            response = requests.post(api_url, json=plain_payload, timeout=10)
-                            if response.status_code == 200 and response.json().get('ok'):
-                                logger.info("Telegram 消息发送成功（纯文本）")
-                                return True
-                        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-                            logger.error(f"Telegram plain-text fallback failed: {e}")
-                    
-                    return False
-            elif response.status_code == 429:
-                # Rate limited — respect Retry-After header
-                retry_after = int(response.headers.get('Retry-After', 2 ** attempt))
-                if attempt < max_retries:
-                    logger.warning(f"Telegram rate limited, retrying in {retry_after}s "
-                                   f"(attempt {attempt}/{max_retries})...")
-                    time.sleep(retry_after)
-                    continue
-                else:
-                    logger.error(f"Telegram rate limited after {max_retries} attempts")
-                    return False
-            else:
-                if attempt < max_retries and response.status_code >= 500:
                     delay = 2 ** attempt
-                    logger.warning(f"Telegram server error HTTP {response.status_code} "
-                                   f"(attempt {attempt}/{max_retries}), retrying in {delay}s...")
+                    logger.warning(
+                        "Telegram request failed (attempt %s/%s): %s, retrying in %ss...",
+                        attempt,
+                        max_retries,
+                        e,
+                        delay,
+                    )
                     time.sleep(delay)
                     continue
-                logger.error(f"Telegram 请求失败: HTTP {response.status_code}")
-                logger.error(f"响应内容: {response.text}")
+                logger.error("Telegram request failed after %s attempts: %s", max_retries, e)
                 return False
 
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("ok"):
+                    logger.info("Telegram message sent successfully")
+                    return True
+
+                error_desc = result.get("description", "unknown error")
+                logger.error("Telegram returned error: %s", error_desc)
+
+                if "parse" in error_desc.lower() or "markdown" in error_desc.lower():
+                    logger.info("Retrying Telegram send as plain text...")
+                    plain_payload = dict(payload)
+                    plain_payload.pop("parse_mode", None)
+                    plain_payload["text"] = text
+                    try:
+                        response = requests.post(api_url, json=plain_payload, timeout=10)
+                        if response.status_code == 200 and response.json().get("ok"):
+                            logger.info("Telegram plain-text fallback sent successfully")
+                            return True
+                    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                        logger.error("Telegram plain-text fallback failed: %s", e)
+
+                return False
+
+            if response.status_code == 429:
+                retry_after = int(response.headers.get("Retry-After", 2 ** attempt))
+                if attempt < max_retries:
+                    logger.warning(
+                        "Telegram rate limited, retrying in %ss (attempt %s/%s)...",
+                        retry_after,
+                        attempt,
+                        max_retries,
+                    )
+                    time.sleep(retry_after)
+                    continue
+                logger.error("Telegram rate limited after %s attempts", max_retries)
+                return False
+
+            if attempt < max_retries and response.status_code >= 500:
+                delay = 2 ** attempt
+                logger.warning(
+                    "Telegram server error HTTP %s (attempt %s/%s), retrying in %ss...",
+                    response.status_code,
+                    attempt,
+                    max_retries,
+                    delay,
+                )
+                time.sleep(delay)
+                continue
+
+            logger.error("Telegram request failed: HTTP %s", response.status_code)
+            logger.error("Telegram response: %s", response.text)
+            return False
+
         return False
-    
-    def _send_telegram_chunked(self, api_url: str, chat_id: str, content: str, max_length: int, message_thread_id: Optional[str] = None) -> bool:
-        """分段发送长 Telegram 消息"""
-        # 按段落分割
+
+    def _send_telegram_chunked(
+        self,
+        api_url: str,
+        chat_id: str,
+        content: str,
+        max_length: int,
+        message_thread_id: Optional[str] = None,
+    ) -> bool:
         sections = content.split("\n---\n")
-        
         current_chunk = []
         current_length = 0
         all_success = True
         chunk_index = 1
-        
+
         for section in sections:
-            section_length = len(section) + 5  # +5 for "\n---\n"
-            
+            section_length = len(section) + 5
+
             if current_length + section_length > max_length:
-                # 发送当前块
                 if current_chunk:
                     chunk_content = "\n---\n".join(current_chunk)
-                    logger.info(f"发送 Telegram 消息块 {chunk_index}...")
-                    if not self._send_telegram_message(api_url, chat_id, chunk_content, message_thread_id):
+                    logger.info("Sending Telegram chunk %s...", chunk_index)
+                    if not self._send_telegram_message(
+                        api_url, chat_id, chunk_content, message_thread_id
+                    ):
                         all_success = False
                     chunk_index += 1
-                
-                # 重置
+
                 current_chunk = [section]
                 current_length = section_length
             else:
                 current_chunk.append(section)
                 current_length += section_length
-        
-        # 发送最后一块
+
         if current_chunk:
             chunk_content = "\n---\n".join(current_chunk)
-            logger.info(f"发送 Telegram 消息块 {chunk_index}...")
-            if not self._send_telegram_message(api_url, chat_id, chunk_content, message_thread_id):
+            logger.info("Sending Telegram chunk %s...", chunk_index)
+            if not self._send_telegram_message(
+                api_url, chat_id, chunk_content, message_thread_id
+            ):
                 all_success = False
-                
+
         return all_success
 
     def _send_telegram_photo(self, image_bytes: bytes) -> bool:
-        """Send image via Telegram sendPhoto API (Issue #289)."""
+        """Send image as Telegram document to avoid platform photo compression."""
         if not self._is_telegram_configured():
             return False
-        bot_token = self._telegram_config['bot_token']
-        chat_id = self._telegram_config['chat_id']
-        message_thread_id = self._telegram_config.get('message_thread_id')
-        api_url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+
+        bot_token = self._telegram_config["bot_token"]
+        chat_id = self._telegram_config["chat_id"]
+        message_thread_id = self._telegram_config.get("message_thread_id")
+        api_url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
+
         try:
-            upload_name = "report.png"
-            mime_type = "image/png"
-            payload_bytes = image_bytes
-            if len(image_bytes) > TELEGRAM_PHOTO_MAX_BYTES:
-                compressed = self._compress_telegram_photo(image_bytes)
-                if compressed:
-                    payload_bytes = compressed
-                    upload_name = "report.jpg"
-                    mime_type = "image/jpeg"
-                    logger.info(
-                        "Telegram image compressed before upload: %d -> %d bytes",
-                        len(image_bytes),
-                        len(payload_bytes),
-                    )
             data = {"chat_id": chat_id}
             if message_thread_id:
-                data['message_thread_id'] = message_thread_id
-            files = {"photo": (upload_name, payload_bytes, mime_type)}
-            response = requests.post(api_url, data=data, files=files, timeout=30)
-            if response.status_code == 200 and response.json().get('ok'):
-                logger.info("Telegram 图片发送成功")
+                data["message_thread_id"] = message_thread_id
+            files = {"document": ("report.png", image_bytes, "image/png")}
+            response = requests.post(api_url, data=data, files=files, timeout=60)
+            if response.status_code == 200 and response.json().get("ok"):
+                logger.info("Telegram document sent successfully")
                 return True
-            logger.error("Telegram 图片发送失败: %s", response.text[:200])
+            logger.error("Telegram document send failed: %s", response.text[:200])
             return False
         except Exception as e:
-            logger.error("Telegram 图片发送异常: %s", e)
+            logger.error("Telegram document send exception: %s", e)
             return False
-
-    def _compress_telegram_photo(self, image_bytes: bytes) -> Optional[bytes]:
-        """Compress oversized image bytes into a Telegram-friendly JPEG."""
-        try:
-            from PIL import Image
-        except ImportError:
-            logger.warning("Pillow unavailable, cannot compress Telegram photo")
-            return None
-
-        try:
-            with Image.open(io.BytesIO(image_bytes)) as img:
-                if img.mode in ("RGBA", "LA"):
-                    background = Image.new("RGB", img.size, (255, 255, 255))
-                    alpha = img.getchannel("A") if "A" in img.getbands() else None
-                    background.paste(img, mask=alpha)
-                    img = background
-                elif img.mode != "RGB":
-                    img = img.convert("RGB")
-
-                for quality in (95, 90, 85, 80, 75, 70, 65, 60):
-                    out = io.BytesIO()
-                    img.save(
-                        out,
-                        format="JPEG",
-                        quality=quality,
-                        optimize=True,
-                        progressive=True,
-                    )
-                    compressed = out.getvalue()
-                    if len(compressed) <= TELEGRAM_PHOTO_TARGET_BYTES:
-                        return compressed
-        except Exception as e:
-            logger.warning("Telegram photo compression failed: %s", e)
-            return None
-
-        logger.warning("Compressed Telegram photo still exceeds safe upload size")
-        return None
 
     def _convert_to_telegram_markdown(self, text: str) -> str:
-        """
-        将标准 Markdown 转换为 Telegram 支持的格式
-        
-        Telegram Markdown 限制：
-        - 不支持 # 标题
-        - 使用 *bold* 而非 **bold**
-        - 使用 _italic_ 
-        """
         result = text
-        
-        # 移除 # 标题标记（Telegram 不支持）
-        result = re.sub(r'^#{1,6}\s+', '', result, flags=re.MULTILINE)
-        
-        # 转换 **bold** 为 *bold*
-        result = re.sub(r'\*\*(.+?)\*\*', r'*\1*', result)
-        
-        # Escape special characters for Telegram Markdown, but preserve link syntax [text](url)
-        # Step 1: temporarily protect markdown links
+        result = re.sub(r"^#{1,6}\s+", "", result, flags=re.MULTILINE)
+        result = re.sub(r"\*\*(.+?)\*\*", r"*\1*", result)
+
         import uuid as _uuid
-        _link_placeholder = f"__LINK_{_uuid.uuid4().hex[:8]}__"
-        _links = []
-        def _save_link(m):
-            _links.append(m.group(0))
-            return f"{_link_placeholder}{len(_links) - 1}"
-        result = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', _save_link, result)
 
-        # Step 2: escape remaining special chars
-        for char in ['[', ']', '(', ')']:
-            result = result.replace(char, f'\\{char}')
+        link_placeholder = f"__LINK_{_uuid.uuid4().hex[:8]}__"
+        links = []
 
-        # Step 3: restore links
-        for i, link in enumerate(_links):
-            result = result.replace(f"{_link_placeholder}{i}", link)
+        def _save_link(match: re.Match[str]) -> str:
+            links.append(match.group(0))
+            return f"{link_placeholder}{len(links) - 1}"
+
+        result = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", _save_link, result)
+
+        for char in ["[", "]", "(", ")"]:
+            result = result.replace(char, f"\\{char}")
+
+        for i, link in enumerate(links):
+            result = result.replace(f"{link_placeholder}{i}", link)
 
         return result
-    
