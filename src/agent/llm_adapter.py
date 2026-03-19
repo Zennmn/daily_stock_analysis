@@ -22,6 +22,7 @@ from src.config import (
     get_configured_llm_models,
     get_effective_agent_models_to_try,
     get_effective_agent_primary_model,
+    should_omit_temperature_for_model,
 )
 
 logger = logging.getLogger(__name__)
@@ -293,8 +294,12 @@ class LLMToolAdapter:
         call_kwargs: Dict[str, Any] = {
             "model": model,
             "messages": openai_messages,
-            "temperature": self._get_temperature(model) if temperature is None else temperature,
         }
+        resolved_temperature = self._get_temperature(model) if temperature is None else temperature
+        if not should_omit_temperature_for_model(model):
+            call_kwargs["temperature"] = resolved_temperature
+        if model.startswith("openai/") and self._config.openai_reasoning_effort:
+            call_kwargs["reasoning_effort"] = self._config.openai_reasoning_effort
         if max_tokens is not None:
             call_kwargs["max_tokens"] = max_tokens
         if timeout is not None:

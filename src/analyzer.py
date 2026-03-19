@@ -29,6 +29,7 @@ from src.config import (
     get_config,
     get_configured_llm_models,
     resolve_news_window_days,
+    should_omit_temperature_for_model,
 )
 from src.storage import persist_llm_usage
 from src.data.stock_mapping import STOCK_NAME_MAP
@@ -811,9 +812,12 @@ class GeminiAnalyzer:
                         {"role": "system", "content": self.SYSTEM_PROMPT},
                         {"role": "user", "content": prompt},
                     ],
-                    "temperature": temperature,
                     "max_tokens": max_tokens,
                 }
+                if not should_omit_temperature_for_model(model):
+                    call_kwargs["temperature"] = temperature
+                if model.startswith("openai/") and config.openai_reasoning_effort:
+                    call_kwargs["reasoning_effort"] = config.openai_reasoning_effort
                 extra = get_thinking_extra_body(model_short)
                 if extra:
                     call_kwargs["extra_body"] = extra

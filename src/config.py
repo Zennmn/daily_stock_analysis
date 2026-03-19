@@ -229,6 +229,22 @@ def resolve_unified_llm_temperature(model: str) -> float:
     return 0.7
 
 
+def resolve_openai_reasoning_effort() -> Optional[str]:
+    """Resolve OpenAI reasoning effort from environment."""
+    value = (os.getenv("OPENAI_REASONING_EFFORT") or "").strip().lower()
+    if value in {"minimal", "low", "medium", "high", "xhigh"}:
+        return value
+    return None
+
+
+def should_omit_temperature_for_model(model: str) -> bool:
+    """Whether the given model should be called without a temperature parameter."""
+    if not model:
+        return False
+    model_name = model.split("/")[-1].strip().lower()
+    return model_name.startswith("gpt-5")
+
+
 def _get_litellm_provider(model: str) -> str:
     """Extract the LiteLLM provider prefix from a model string."""
     if not model:
@@ -387,6 +403,7 @@ class Config:
     openai_model: str = "gpt-4o-mini"  # OpenAI 兼容模型名称
     openai_vision_model: Optional[str] = None  # Deprecated: use VISION_MODEL instead
     openai_temperature: float = 0.7  # OpenAI 温度参数（0.0-2.0，默认0.7）
+    openai_reasoning_effort: Optional[str] = None  # OpenAI reasoning effort (low/medium/high/xhigh)
 
     # === Vision 配置 ===
     # VISION_MODEL: litellm model string used for image understanding calls.
@@ -978,6 +995,7 @@ class Config:
             openai_model=os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
             openai_vision_model=os.getenv('OPENAI_VISION_MODEL') or None,
             openai_temperature=float(os.getenv('OPENAI_TEMPERATURE', '0.7')),
+            openai_reasoning_effort=resolve_openai_reasoning_effort(),
             # Vision model: VISION_MODEL > OPENAI_VISION_MODEL (alias) > default
             vision_model=(
                 os.getenv('VISION_MODEL')
