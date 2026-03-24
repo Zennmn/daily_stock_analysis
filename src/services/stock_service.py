@@ -142,7 +142,33 @@ class StockService:
         return candidates[: max(1, limit)]
 
     def _load_cn_market_snapshot(self, ak: Any) -> pd.DataFrame:
-        return ak.stock_zh_a_spot_em()
+        try:
+            return ak.stock_zh_a_spot_em()
+        except Exception as primary_error:
+            logger.warning("stock_zh_a_spot_em failed, fallback to ranked candidates: %s", primary_error)
+
+        candidate_frames: List[pd.DataFrame] = []
+        fallback_loaders = [
+            ("stock_hot_rank_em", self._load_cn_hot_rank_snapshot),
+            ("stock_hot_up_em", self._load_cn_hot_up_snapshot),
+        ]
+        for loader_name, loader in fallback_loaders:
+            try:
+                fallback_df = loader(ak)
+                if fallback_df is not None and not fallback_df.empty:
+                    candidate_frames.append(fallback_df)
+            except Exception as e:
+                logger.warning("%s fallback failed: %s", loader_name, e)
+
+        if not candidate_frames:
+            raise ConnectionError("all cn recommendation snapshot loaders failed")
+
+        merged = pd.concat(candidate_frames, ignore_index=True, sort=False)
+        if "代码" in merged.columns:
+            merged = merged.drop_duplicates(subset=["代码"])
+        elif "stock_code" in merged.columns:
+            merged = merged.drop_duplicates(subset=["stock_code"])
+        return merged
 
     def _load_hk_market_snapshot(self, ak: Any) -> pd.DataFrame:
         try:
@@ -152,6 +178,48 @@ class StockService:
 
     def _load_us_market_snapshot(self, ak: Any) -> pd.DataFrame:
         return ak.stock_us_spot_em()
+
+    def _load_cn_hot_rank_snapshot(self, ak: Any) -> pd.DataFrame:
+        raw = ak.stock_hot_rank_em()
+        if raw is None or raw.empty:
+            return pd.DataFrame()
+
+        code_col = self._pick_existing_column(raw, ["代码", "股票代码"])
+        name_col = self._pick_existing_column(raw, ["股票名称", "名称"])
+        if not code_col or not name_col:
+            return pd.DataFrame()
+
+        fallback = raw.rename(columns={code_col: "代码", name_col: "名称"}).copy()
+        fallback["最新价"] = pd.to_numeric(fallback.get("最新价"), errors="coerce")
+        fallback["涨跌幅"] = pd.to_numeric(fallback.get("涨跌幅"), errors="coerce")
+        fallback["换手率"] = pd.to_numeric(fallback.get("换手率"), errors="coerce")
+        fallback["量比"] = pd.to_numeric(fallback.get("量比"), errors="coerce")
+        return fallback
+
+    def _load_cn_hot_up_snapshot(self, ak: Any) -> pd.DataFrame:
+        candidate_functions = [
+            "stock_hot_up_em",
+            "stock_zt_pool_em",
+            "stock_zt_pool_dtgc_em",
+        ]
+        for func_name in candidate_functions:
+            func = getattr(ak, func_name, None)
+            if not callable(func):
+                continue
+            raw = func()
+            if raw is None or raw.empty:
+                continue
+            code_col = self._pick_existing_column(raw, ["代码", "股票代码"])
+            name_col = self._pick_existing_column(raw, ["名称", "股票名称"])
+            if not code_col or not name_col:
+                continue
+            fallback = raw.rename(columns={code_col: "代码", name_col: "名称"}).copy()
+            fallback["最新价"] = pd.to_numeric(fallback.get("最新价"), errors="coerce")
+            fallback["涨跌幅"] = pd.to_numeric(fallback.get("涨跌幅"), errors="coerce")
+            fallback["换手率"] = pd.to_numeric(fallback.get("换手率"), errors="coerce")
+            fallback["量比"] = pd.to_numeric(fallback.get("量比"), errors="coerce")
+            return fallback
+        return pd.DataFrame()
 
     def _build_recommendation_candidates(
         self,
