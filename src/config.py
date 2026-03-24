@@ -428,6 +428,7 @@ class Config:
     # === 自选股配置 ===
     stock_list: List[str] = field(default_factory=list)
     auto_recommend_stocks_count: int = 0
+    auto_recommend_market: str = "cn"
 
     # === 飞书云文档配置 ===
     feishu_app_id: Optional[str] = None
@@ -1207,6 +1208,9 @@ class Config:
                 minimum=0,
                 maximum=20,
             ),
+            auto_recommend_market=cls._parse_auto_recommend_market(
+                os.getenv('AUTO_RECOMMEND_MARKET', 'cn')
+            ),
             report_language=cls._parse_report_language(report_language_raw),
             report_summary_only=os.getenv('REPORT_SUMMARY_ONLY', 'false').lower() == 'true',
             report_templates_dir=os.getenv('REPORT_TEMPLATES_DIR', 'templates'),
@@ -1710,6 +1714,19 @@ class Config:
             return v
         logging.getLogger(__name__).warning(
             f"MARKET_REVIEW_REGION 配置值 '{value}' 无效，已回退为默认值 'cn'（合法值：cn / us / both）"
+        )
+        return 'cn'
+
+    @classmethod
+    def _parse_auto_recommend_market(cls, value: str) -> str:
+        """Parse auto recommendation market, fallback to cn for invalid values."""
+        import logging
+        v = (value or 'cn').strip().lower()
+        if v in ('cn', 'hk', 'us'):
+            return v
+        logging.getLogger(__name__).warning(
+            "AUTO_RECOMMEND_MARKET value '%s' is invalid, fallback to 'cn' (valid: cn / hk / us)",
+            value,
         )
         return 'cn'
 

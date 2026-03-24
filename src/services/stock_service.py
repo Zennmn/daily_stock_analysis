@@ -1,17 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-===================================
-股票数据服务层
-===================================
-
-职责：
-1. 封装股票数据获取逻辑
-2. 提供实时行情和历史数据接口
+Stock data service layer.
 """
 
 import logging
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -21,50 +15,23 @@ logger = logging.getLogger(__name__)
 
 
 class StockService:
-    """
-    股票数据服务
-    
-    封装股票数据获取的业务逻辑
-    """
-    
+    """Service wrapper for stock quote, history, and recommendation logic."""
+
     def __init__(self):
-        """初始化股票数据服务"""
         self.repo = StockRepository()
-    
+
     def get_realtime_quote(self, stock_code: str) -> Optional[Dict[str, Any]]:
-        """
-        获取股票实时行情
-        
-        Args:
-            stock_code: 股票代码
-            
-        Returns:
-            实时行情数据字典
-        """
+        """Get a realtime quote for one stock."""
         try:
-            # 调用数据获取器获取实时行情
             from data_provider.base import DataFetcherManager
-            
+
             manager = DataFetcherManager()
             quote = manager.get_realtime_quote(stock_code)
-            
+
             if quote is None:
-                logger.warning(f"获取 {stock_code} 实时行情失败")
+                logger.warning("get realtime quote failed: %s", stock_code)
                 return None
-            
-            # UnifiedRealtimeQuote 是 dataclass，使用 getattr 安全访问字段
-            # 字段映射: UnifiedRealtimeQuote -> API 响应
-            # - code -> stock_code
-            # - name -> stock_name
-            # - price -> current_price
-            # - change_amount -> change
-            # - change_pct -> change_percent
-            # - open_price -> open
-            # - high -> high
-            # - low -> low
-            # - pre_close -> prev_close
-            # - volume -> volume
-            # - amount -> amount
+
             return {
                 "stock_code": getattr(quote, "code", stock_code),
                 "stock_name": getattr(quote, "name", None),
@@ -79,56 +46,36 @@ class StockService:
                 "amount": getattr(quote, "amount", None),
                 "update_time": datetime.now().isoformat(),
             }
-            
         except ImportError:
-            logger.warning("DataFetcherManager 未找到，使用占位数据")
+            logger.warning("DataFetcherManager not found, fallback to placeholder quote")
             return self._get_placeholder_quote(stock_code)
         except Exception as e:
-            logger.error(f"获取实时行情失败: {e}", exc_info=True)
+            logger.error("get realtime quote failed: %s", e, exc_info=True)
             return None
-    
+
     def get_history_data(
         self,
         stock_code: str,
         period: str = "daily",
-        days: int = 30
+        days: int = 30,
     ) -> Dict[str, Any]:
-        """
-        获取股票历史行情
-        
-        Args:
-            stock_code: 股票代码
-            period: K 线周期 (daily/weekly/monthly)
-            days: 获取天数
-            
-        Returns:
-            历史行情数据字典
-            
-        Raises:
-            ValueError: 当 period 不是 daily 时抛出（weekly/monthly 暂未实现）
-        """
-        # 验证 period 参数，只支持 daily
+        """Get historical daily data for one stock."""
         if period != "daily":
             raise ValueError(
-                f"暂不支持 '{period}' 周期，目前仅支持 'daily'。"
-                "weekly/monthly 聚合功能将在后续版本实现。"
+                f"unsupported period '{period}', currently only 'daily' is supported"
             )
-        
+
         try:
-            # 调用数据获取器获取历史数据
             from data_provider.base import DataFetcherManager
-            
+
             manager = DataFetcherManager()
-            df, source = manager.get_daily_data(stock_code, days=days)
-            
+            df, _source = manager.get_daily_data(stock_code, days=days)
+
             if df is None or df.empty:
-                logger.warning(f"获取 {stock_code} 历史数据失败")
+                logger.warning("get history data failed: %s", stock_code)
                 return {"stock_code": stock_code, "period": period, "data": []}
-            
-            # 获取股票名称
+
             stock_name = manager.get_stock_name(stock_code)
-            
-            # 转换为响应格式
             data = []
             for _, row in df.iterrows():
                 date_val = row.get("date")
@@ -136,56 +83,84 @@ class StockService:
                     date_str = date_val.strftime("%Y-%m-%d")
                 else:
                     date_str = str(date_val)
-                
-                data.append({
-                    "date": date_str,
-                    "open": float(row.get("open", 0)),
-                    "high": float(row.get("high", 0)),
-                    "low": float(row.get("low", 0)),
-                    "close": float(row.get("close", 0)),
-                    "volume": float(row.get("volume", 0)) if row.get("volume") else None,
-                    "amount": float(row.get("amount", 0)) if row.get("amount") else None,
-                    "change_percent": float(row.get("pct_chg", 0)) if row.get("pct_chg") else None,
-                })
-            
+
+                data.append(
+                    {
+                        "date": date_str,
+                        "open": float(row.get("open", 0)),
+                        "high": float(row.get("high", 0)),
+                        "low": float(row.get("low", 0)),
+                        "close": float(row.get("close", 0)),
+                        "volume": float(row.get("volume", 0)) if row.get("volume") else None,
+                        "amount": float(row.get("amount", 0)) if row.get("amount") else None,
+                        "change_percent": float(row.get("pct_chg", 0)) if row.get("pct_chg") else None,
+                    }
+                )
+
             return {
                 "stock_code": stock_code,
                 "stock_name": stock_name,
                 "period": period,
                 "data": data,
             }
-            
         except ImportError:
-            logger.warning("DataFetcherManager 未找到，返回空数据")
+            logger.warning("DataFetcherManager not found, return empty history")
             return {"stock_code": stock_code, "period": period, "data": []}
         except Exception as e:
-            logger.error(f"获取历史数据失败: {e}", exc_info=True)
+            logger.error("get history data failed: %s", e, exc_info=True)
             return {"stock_code": stock_code, "period": period, "data": []}
-    
-    def recommend_stocks(self, limit: int = 3) -> List[Dict[str, Any]]:
-        """Return momentum-style stock recommendations from the latest A-share snapshot."""
+
+    def recommend_stocks(self, limit: int = 3, market: str = "cn") -> List[Dict[str, Any]]:
+        """Return momentum-style stock recommendations for cn / hk / us markets."""
         try:
             import akshare as ak
         except ImportError:
             logger.warning("akshare not installed, recommendation feature unavailable")
             return []
 
+        market_key = (market or "cn").strip().lower()
         try:
-            df = ak.stock_zh_a_spot_em()
+            if market_key == "hk":
+                df = self._load_hk_market_snapshot(ak)
+            elif market_key == "us":
+                df = self._load_us_market_snapshot(ak)
+            else:
+                df = self._load_cn_market_snapshot(ak)
         except Exception as e:
-            logger.error(f"获取全市场行情失败: {e}", exc_info=True)
+            logger.error(
+                "load recommendation snapshot failed: market=%s err=%s",
+                market_key,
+                e,
+                exc_info=True,
+            )
             return []
 
         if df is None or df.empty:
             return []
 
-        candidates = self._build_recommendation_candidates(df)
+        candidates = self._build_recommendation_candidates(df, market=market_key)
         return candidates[: max(1, limit)]
 
-    def _build_recommendation_candidates(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
+    def _load_cn_market_snapshot(self, ak: Any) -> pd.DataFrame:
+        return ak.stock_zh_a_spot_em()
+
+    def _load_hk_market_snapshot(self, ak: Any) -> pd.DataFrame:
+        try:
+            return ak.stock_hk_main_board_spot_em()
+        except Exception:
+            return ak.stock_hk_spot_em()
+
+    def _load_us_market_snapshot(self, ak: Any) -> pd.DataFrame:
+        return ak.stock_us_spot_em()
+
+    def _build_recommendation_candidates(
+        self,
+        df: pd.DataFrame,
+        market: str = "cn",
+    ) -> List[Dict[str, Any]]:
         working = df.copy()
 
-        code_col = self._pick_existing_column(working, ["代码", "股票代码", "code"])
+        code_col = self._pick_existing_column(working, ["代码", "股票代码", "symbol", "代码"])
         name_col = self._pick_existing_column(working, ["名称", "股票名称", "name"])
         price_col = self._pick_existing_column(working, ["最新价", "现价", "price"])
         pct_col = self._pick_existing_column(working, ["涨跌幅", "涨幅", "change_percent"])
@@ -194,7 +169,11 @@ class StockService:
         market_cap_col = self._pick_existing_column(working, ["总市值", "总市值-动态", "market_cap"])
 
         if not all([code_col, name_col, price_col, pct_col]):
-            logger.warning("recommendation columns missing, available=%s", list(working.columns))
+            logger.warning(
+                "recommendation columns missing: market=%s available=%s",
+                market,
+                list(working.columns),
+            )
             return []
 
         rename_map = {
@@ -217,14 +196,11 @@ class StockService:
 
         working["stock_code"] = working["stock_code"].astype(str).str.strip()
         working["stock_name"] = working["stock_name"].astype(str).str.strip()
+        working["stock_code"] = working["stock_code"].apply(
+            lambda value: self._normalize_recommendation_code(value, market)
+        )
 
-        filtered = working[
-            working["stock_code"].str.match(r"^\d{6}$", na=False)
-            & ~working["stock_name"].str.upper().str.contains("ST", na=False)
-            & (working["current_price"] >= 3)
-            & working["change_percent"].between(2.0, 9.7, inclusive="both")
-        ].copy()
-
+        filtered = self._filter_recommendation_universe(working, market)
         if filtered.empty:
             return []
 
@@ -237,22 +213,25 @@ class StockService:
 
         filtered["market_cap_score"] = filtered["market_cap"].apply(self._market_cap_score)
         filtered["score"] = (
-            filtered["change_percent"].fillna(0) * 0.38
-            + filtered["volume_ratio"].fillna(0) * 18
-            + filtered["turnover_rate"].fillna(0) * 1.8
+            filtered["change_percent"].fillna(0) * 0.42
+            + filtered["volume_ratio"].fillna(0) * 16
+            + filtered["turnover_rate"].fillna(0) * 1.5
             + filtered["market_cap_score"].fillna(0)
         )
-        filtered = filtered.sort_values(["score", "change_percent", "turnover_rate"], ascending=False)
+        filtered = filtered.sort_values(
+            ["score", "change_percent", "turnover_rate"],
+            ascending=False,
+        )
 
         items: List[Dict[str, Any]] = []
-        for _, row in filtered.head(10).iterrows():
+        for _, row in filtered.head(max(10, 3)).iterrows():
             pct = self._safe_round(row.get("change_percent"))
             turnover = self._safe_round(row.get("turnover_rate"))
             volume_ratio = self._safe_round(row.get("volume_ratio"))
             reason_parts = [
-                f"当日强势 {pct}%" if pct is not None else None,
-                f"量比 {volume_ratio}" if volume_ratio is not None and volume_ratio >= 1.5 else None,
-                f"换手 {turnover}%" if turnover is not None and turnover >= 3 else None,
+                f"momentum {pct}%" if pct is not None else None,
+                f"volume_ratio {volume_ratio}" if volume_ratio is not None and volume_ratio >= 1.2 else None,
+                f"turnover {turnover}%" if turnover is not None and turnover >= 2 else None,
             ]
             items.append(
                 {
@@ -263,10 +242,39 @@ class StockService:
                     "turnover_rate": turnover,
                     "volume_ratio": volume_ratio,
                     "score": round(float(row.get("score", 0.0)), 2),
-                    "reason": "，".join([part for part in reason_parts if part]) or "当前强势度和交易活跃度较高",
+                    "reason": ", ".join([part for part in reason_parts if part])
+                    or "strong momentum and active trading",
                 }
             )
         return items
+
+    def _filter_recommendation_universe(
+        self,
+        working: pd.DataFrame,
+        market: str,
+    ) -> pd.DataFrame:
+        if market == "hk":
+            return working[
+                working["stock_code"].str.match(r"^HK\d{5}$", na=False)
+                & ~working["stock_name"].str.upper().str.contains("ST", na=False)
+                & (working["current_price"] >= 1)
+                & working["change_percent"].between(1.5, 18.0, inclusive="both")
+            ].copy()
+
+        if market == "us":
+            return working[
+                working["stock_code"].str.match(r"^[A-Z]{1,5}(\.[A-Z])?$", na=False)
+                & ~working["stock_name"].str.upper().str.contains("ETF", na=False)
+                & (working["current_price"] >= 3)
+                & working["change_percent"].between(1.5, 20.0, inclusive="both")
+            ].copy()
+
+        return working[
+            working["stock_code"].str.match(r"^\d{6}$", na=False)
+            & ~working["stock_name"].str.upper().str.contains("ST", na=False)
+            & (working["current_price"] >= 3)
+            & working["change_percent"].between(2.0, 9.7, inclusive="both")
+        ].copy()
 
     @staticmethod
     def _pick_existing_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
@@ -299,16 +307,27 @@ class StockService:
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _normalize_recommendation_code(raw_code: Any, market: str) -> str:
+        text = str(raw_code or "").strip().upper()
+        if not text:
+            return ""
+
+        if market == "hk":
+            digits = "".join(ch for ch in text if ch.isdigit())
+            if 1 <= len(digits) <= 5:
+                return f"HK{digits.zfill(5)}"
+            return text
+
+        if market == "us":
+            if "." in text:
+                text = text.rsplit(".", 1)[-1]
+            return text
+
+        return text
+
     def _get_placeholder_quote(self, stock_code: str) -> Dict[str, Any]:
-        """
-        获取占位行情数据（用于测试）
-        
-        Args:
-            stock_code: 股票代码
-            
-        Returns:
-            占位行情数据
-        """
+        """Return a placeholder quote for tests and fallback flows."""
         return {
             "stock_code": stock_code,
             "stock_name": f"股票{stock_code}",

@@ -271,10 +271,17 @@ def run_full_analysis(
             config.refresh_stock_list()
 
         if stock_codes is None and getattr(config, 'auto_recommend_stocks_count', 0) > 0:
-            recommended_codes = _load_recommended_stock_codes(config.auto_recommend_stocks_count)
+            recommended_codes = _load_recommended_stock_codes(
+                config.auto_recommend_stocks_count,
+                market=getattr(config, 'auto_recommend_market', 'cn'),
+            )
             if recommended_codes:
                 stock_codes = recommended_codes
-                logger.info(f"本次运行使用自动推荐股票: {stock_codes}")
+                logger.info(
+                    "本次运行使用自动推荐股票: market=%s codes=%s",
+                    getattr(config, 'auto_recommend_market', 'cn'),
+                    stock_codes,
+                )
             else:
                 logger.warning(f"自动推荐股票失败，回退到 STOCK_LIST: {config.stock_list}")
 
@@ -450,7 +457,7 @@ def run_full_analysis(
         logger.exception(f"分析流程执行失败: {e}")
 
 
-def _load_recommended_stock_codes(limit: int) -> List[str]:
+def _load_recommended_stock_codes(limit: int, market: str = "cn") -> List[str]:
     """Return recommended stock codes for scheduled/CLI runs."""
     if limit <= 0:
         return []
@@ -459,7 +466,7 @@ def _load_recommended_stock_codes(limit: int) -> List[str]:
         from src.services.stock_service import StockService
 
         service = StockService()
-        items = service.recommend_stocks(limit=limit)
+        items = service.recommend_stocks(limit=limit, market=market)
         codes = [
             canonical_stock_code(str(item.get("stock_code", "")).strip())
             for item in items

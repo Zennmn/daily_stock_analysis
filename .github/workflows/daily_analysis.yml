@@ -17,6 +17,15 @@ on:
           - full          # 完整分析（股票+大盘）
           - market-only   # 仅大盘复盘
           - stocks-only   # 仅股票分析
+      market:
+        description: '选股市场'
+        required: true
+        default: 'cn'
+        type: choice
+        options:
+          - cn
+          - hk
+          - us
       force_run:
         description: '强制运行（跳过交易日检查）'
         required: false
@@ -161,6 +170,7 @@ jobs:
           # ==========================================
           STOCK_LIST: ${{ vars.STOCK_LIST || secrets.STOCK_LIST || '600519' }}
           AUTO_RECOMMEND_STOCKS_COUNT: ${{ vars.AUTO_RECOMMEND_STOCKS_COUNT || secrets.AUTO_RECOMMEND_STOCKS_COUNT || '5' }}
+          AUTO_RECOMMEND_MARKET: ${{ github.event.inputs.market || vars.AUTO_RECOMMEND_MARKET || secrets.AUTO_RECOMMEND_MARKET || 'cn' }}
           MARKET_REVIEW_REGION: ${{ vars.MARKET_REVIEW_REGION || secrets.MARKET_REVIEW_REGION || 'cn' }}
           
           # ==========================================
@@ -197,6 +207,15 @@ jobs:
 
           # 判断运行模式
           MODE="${{ github.event.inputs.mode || 'full' }}"
+          SELECTED_MARKET="${{ github.event.inputs.market || vars.AUTO_RECOMMEND_MARKET || 'cn' }}"
+
+          if [ "$SELECTED_MARKET" = "us" ]; then
+            export MARKET_REVIEW_REGION="us"
+          elif [ "$SELECTED_MARKET" = "cn" ]; then
+            export MARKET_REVIEW_REGION="cn"
+          else
+            export MARKET_REVIEW_ENABLED="false"
+          fi
           
           echo "=========================================="
           echo "🚀 A股自选股智能分析系统"
