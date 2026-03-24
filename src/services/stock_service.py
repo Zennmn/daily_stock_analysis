@@ -13,6 +13,8 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 
+import pandas as pd
+
 from src.repositories.stock_repo import StockRepository
 
 logger = logging.getLogger(__name__)
@@ -160,6 +162,143 @@ class StockService:
             logger.error(f"获取历史数据失败: {e}", exc_info=True)
             return {"stock_code": stock_code, "period": period, "data": []}
     
+    def recommend_stocks(self, limit: int = 3) -> List[Dict[str, Any]]:
+        """Return momentum-style stock recommendations from the latest A-share snapshot."""
+        try:
+            import akshare as ak
+        except ImportError:
+            logger.warning("akshare not installed, recommendation feature unavailable")
+            return []
+
+        try:
+            df = ak.stock_zh_a_spot_em()
+        except Exception as e:
+            logger.error(f"获取全市场行情失败: {e}", exc_info=True)
+            return []
+
+        if df is None or df.empty:
+            return []
+
+        candidates = self._build_recommendation_candidates(df)
+        return candidates[: max(1, limit)]
+
+    def _build_recommendation_candidates(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
+        working = df.copy()
+
+        code_col = self._pick_existing_column(working, ["代码", "股票代码", "code"])
+        name_col = self._pick_existing_column(working, ["名称", "股票名称", "name"])
+        price_col = self._pick_existing_column(working, ["最新价", "现价", "price"])
+        pct_col = self._pick_existing_column(working, ["涨跌幅", "涨幅", "change_percent"])
+        turnover_col = self._pick_existing_column(working, ["换手率", "turnover_rate"])
+        volume_ratio_col = self._pick_existing_column(working, ["量比", "volume_ratio"])
+        market_cap_col = self._pick_existing_column(working, ["总市值", "总市值-动态", "market_cap"])
+
+        if not all([code_col, name_col, price_col, pct_col]):
+            logger.warning("recommendation columns missing, available=%s", list(working.columns))
+            return []
+
+        rename_map = {
+            code_col: "stock_code",
+            name_col: "stock_name",
+            price_col: "current_price",
+            pct_col: "change_percent",
+        }
+        if turnover_col:
+            rename_map[turnover_col] = "turnover_rate"
+        if volume_ratio_col:
+            rename_map[volume_ratio_col] = "volume_ratio"
+        if market_cap_col:
+            rename_map[market_cap_col] = "market_cap"
+        working = working.rename(columns=rename_map)
+
+        for col in ["current_price", "change_percent", "turnover_rate", "volume_ratio", "market_cap"]:
+            if col in working.columns:
+                working[col] = pd.to_numeric(working[col], errors="coerce")
+
+        working["stock_code"] = working["stock_code"].astype(str).str.strip()
+        working["stock_name"] = working["stock_name"].astype(str).str.strip()
+
+        filtered = working[
+            working["stock_code"].str.match(r"^\d{6}$", na=False)
+            & ~working["stock_name"].str.upper().str.contains("ST", na=False)
+            & (working["current_price"] >= 3)
+            & working["change_percent"].between(2.0, 9.7, inclusive="both")
+        ].copy()
+
+        if filtered.empty:
+            return []
+
+        if "turnover_rate" not in filtered.columns:
+            filtered["turnover_rate"] = 0.0
+        if "volume_ratio" not in filtered.columns:
+            filtered["volume_ratio"] = 1.0
+        if "market_cap" not in filtered.columns:
+            filtered["market_cap"] = None
+
+        filtered["market_cap_score"] = filtered["market_cap"].apply(self._market_cap_score)
+        filtered["score"] = (
+            filtered["change_percent"].fillna(0) * 0.38
+            + filtered["volume_ratio"].fillna(0) * 18
+            + filtered["turnover_rate"].fillna(0) * 1.8
+            + filtered["market_cap_score"].fillna(0)
+        )
+        filtered = filtered.sort_values(["score", "change_percent", "turnover_rate"], ascending=False)
+
+        items: List[Dict[str, Any]] = []
+        for _, row in filtered.head(10).iterrows():
+            pct = self._safe_round(row.get("change_percent"))
+            turnover = self._safe_round(row.get("turnover_rate"))
+            volume_ratio = self._safe_round(row.get("volume_ratio"))
+            reason_parts = [
+                f"当日强势 {pct}%" if pct is not None else None,
+                f"量比 {volume_ratio}" if volume_ratio is not None and volume_ratio >= 1.5 else None,
+                f"换手 {turnover}%" if turnover is not None and turnover >= 3 else None,
+            ]
+            items.append(
+                {
+                    "stock_code": str(row.get("stock_code")),
+                    "stock_name": str(row.get("stock_name")),
+                    "current_price": self._safe_round(row.get("current_price")),
+                    "change_percent": pct,
+                    "turnover_rate": turnover,
+                    "volume_ratio": volume_ratio,
+                    "score": round(float(row.get("score", 0.0)), 2),
+                    "reason": "，".join([part for part in reason_parts if part]) or "当前强势度和交易活跃度较高",
+                }
+            )
+        return items
+
+    @staticmethod
+    def _pick_existing_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+        for name in candidates:
+            if name in df.columns:
+                return name
+        return None
+
+    @staticmethod
+    def _market_cap_score(value: Any) -> float:
+        try:
+            market_cap = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+        if market_cap <= 0:
+            return 0.0
+        if market_cap <= 8_000_000_000:
+            return 12.0
+        if market_cap <= 20_000_000_000:
+            return 8.0
+        if market_cap <= 50_000_000_000:
+            return 4.0
+        return 1.0
+
+    @staticmethod
+    def _safe_round(value: Any, digits: int = 2) -> Optional[float]:
+        try:
+            return round(float(value), digits)
+        except (TypeError, ValueError):
+            return None
+
     def _get_placeholder_quote(self, stock_code: str) -> Dict[str, Any]:
         """
         获取占位行情数据（用于测试）

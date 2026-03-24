@@ -270,6 +270,14 @@ def run_full_analysis(
         if stock_codes is None:
             config.refresh_stock_list()
 
+        if stock_codes is None and getattr(config, 'auto_recommend_stocks_count', 0) > 0:
+            recommended_codes = _load_recommended_stock_codes(config.auto_recommend_stocks_count)
+            if recommended_codes:
+                stock_codes = recommended_codes
+                logger.info(f"本次运行使用自动推荐股票: {stock_codes}")
+            else:
+                logger.warning(f"自动推荐股票失败，回退到 STOCK_LIST: {config.stock_list}")
+
         # Issue #373: Trading day filter (per-stock, per-market)
         effective_codes = stock_codes if stock_codes is not None else config.stock_list
         filtered_codes, effective_region, should_skip = _compute_trading_day_filter(
@@ -440,6 +448,33 @@ def run_full_analysis(
 
     except Exception as e:
         logger.exception(f"分析流程执行失败: {e}")
+
+
+def _load_recommended_stock_codes(limit: int) -> List[str]:
+    """Return recommended stock codes for scheduled/CLI runs."""
+    if limit <= 0:
+        return []
+
+    try:
+        from src.services.stock_service import StockService
+
+        service = StockService()
+        items = service.recommend_stocks(limit=limit)
+        codes = [
+            canonical_stock_code(str(item.get("stock_code", "")).strip())
+            for item in items
+            if str(item.get("stock_code", "")).strip()
+        ]
+        deduped_codes: List[str] = []
+        seen = set()
+        for code in codes:
+            if code and code not in seen:
+                seen.add(code)
+                deduped_codes.append(code)
+        return deduped_codes[:limit]
+    except Exception as e:
+        logger.error(f"加载自动推荐股票失败: {e}", exc_info=True)
+        return []
 
 
 def start_api_server(host: str, port: int, config: Config) -> None:

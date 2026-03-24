@@ -427,6 +427,7 @@ class Config:
     
     # === 自选股配置 ===
     stock_list: List[str] = field(default_factory=list)
+    auto_recommend_stocks_count: int = 0
 
     # === 飞书云文档配置 ===
     feishu_app_id: Optional[str] = None
@@ -1199,6 +1200,13 @@ class Config:
             astrbot_token=os.getenv('ASTRBOT_TOKEN'),
             single_stock_notify=os.getenv('SINGLE_STOCK_NOTIFY', 'false').lower() == 'true',
             report_type=cls._parse_report_type(os.getenv('REPORT_TYPE', 'simple')),
+            auto_recommend_stocks_count=parse_env_int(
+                os.getenv('AUTO_RECOMMEND_STOCKS_COUNT'),
+                0,
+                field_name='AUTO_RECOMMEND_STOCKS_COUNT',
+                minimum=0,
+                maximum=20,
+            ),
             report_language=cls._parse_report_language(report_language_raw),
             report_summary_only=os.getenv('REPORT_SUMMARY_ONLY', 'false').lower() == 'true',
             report_templates_dir=os.getenv('REPORT_TEMPLATES_DIR', 'templates'),
