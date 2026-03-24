@@ -75,6 +75,7 @@ jobs:
           LITELLM_CONFIG_YAML: ${{ vars.LITELLM_CONFIG_YAML || secrets.LITELLM_CONFIG_YAML }}
           LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
           LITELLM_MODEL: ${{ vars.LITELLM_MODEL || secrets.LITELLM_MODEL }}
+          LLM_TEMPERATURE: ${{ vars.LLM_TEMPERATURE || secrets.LLM_TEMPERATURE || '1' }}
 
           # Gemini AI（主选）
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

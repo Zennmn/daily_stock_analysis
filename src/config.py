@@ -292,6 +292,10 @@ def get_configured_llm_models(model_list: List[Dict[str, Any]]) -> List[str]:
 
 def resolve_unified_llm_temperature(model: str) -> float:
     """Resolve the unified LLM temperature with backward-compatible fallbacks."""
+    model_name = (model or "").strip().lower()
+    if model_name.startswith("openai/gpt-5") or model_name.startswith("gpt-5"):
+        return 1.0
+
     llm_temperature_raw = os.getenv("LLM_TEMPERATURE")
     if llm_temperature_raw and llm_temperature_raw.strip():
         try:

@@ -1029,13 +1029,21 @@ class GeminiAnalyzer:
         for model in models_to_try:
             try:
                 model_short = model.split("/")[-1] if "/" in model else model
+                effective_temperature = temperature
+                if model_short.startswith("gpt-5") and temperature != 1:
+                    effective_temperature = 1
+                    logger.info(
+                        "[LiteLLM] force temperature=1 for model=%s (requested=%s)",
+                        model,
+                        temperature,
+                    )
                 call_kwargs: Dict[str, Any] = {
                     "model": model,
                     "messages": [
                         {"role": "system", "content": effective_system_prompt},
                         {"role": "user", "content": prompt},
                     ],
-                    "temperature": temperature,
+                    "temperature": effective_temperature,
                     "max_tokens": max_tokens,
                 }
                 extra = get_thinking_extra_body(model_short)
